@@ -1,0 +1,120 @@
+version: '3.8'
+
+services:
+  traefik:
+    image: ${TRAEFIK_IMAGE}:${TRAEFIK_VERSION}
+    hostname: traefik
+    privileged: true
+    userns_mode: host
+    networks:
+      - traefik
+      - gitlab-ee
+      - jenkins-ci
+    ports:
+      - "80:80"
+      - "443:443"
+      - "1222:1222"
+    volumes:
+      - "${TRAEFIK_VOLUME_STATIC_CONF}:/etc/traefik/traefik.yml:ro"
+      - "${TRAEFIK_VOLUME_DYNAMIC_CONF}:/etc/traefik/conf.d:ro"
+      - "${TRAEFIK_VOLUME_CERTS}:/etc/traefik/cert.d:ro"
+      - "${TRAEFIK_VOLUME_LOGS}:/etc/traefik/log.d:rw"
+      - "${TRAEFIK_VOLUME_HTPASSWD}:/etc/traefik/htpasswd.d:ro"
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "/etc/localtime:/etc/localtime:ro"
+
+  gitlab-ee:
+    image: ${GITLAB_IMAGE}:${GITLAB_VERSION}
+    hostname: gitlab-ee
+    labels:
+      - "backup.gitlab.enabled=true"
+    networks:
+      - gitlab-ee
+      - gitlab-runner
+    environment:
+      GITLAB_LOG_LEVEL: info
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url "https://git.dmcrda.creditandorra"
+        gitlab_rails['gitlab_shell_ssh_port'] = 1222
+        gitlab_rails['initial_root_password'] = "${GITLAB_ADMIN_PASSWORD}"
+        gitlab_rails['gitlab_default_can_create_group'] = false
+        gitlab_rails['time_zone'] = "Europe/Madrid"
+        gitlab_rails['gitlab_email_enabled'] = true
+        gitlab_rails['gitlab_email_display_name'] = "Git"
+        gitlab_rails['gitlab_email_from'] = "norespondre@creditandorra.ad"
+        gitlab_rails['gitlab_email_reply_to'] = "norespondre@creditandorra.ad"
+        gitlab_rails['smtp_enable'] = true
+        gitlab_rails['smtp_address'] = "correuca"
+        gitlab_rails['smtp_port'] = 25
+        gitlab_rails['smtp_user_name'] = "SendMail@dmcrda.creditandorra"
+        gitlab_rails['smtp_password'] = "${GITLAB_SMTP_PASSWORD}"
+        gitlab_rails['smtp_domain'] = "dmcrda.creditandorra"
+        gitlab_rails['smtp_authentication'] = "login"
+        gitlab_rails['smtp_openssl_verify_mode'] = "none"
+        gitlab_rails['manage_backup_path'] = true
+        gitlab_rails['backup_keep_time'] = 172800 
+        nginx['listen_port'] = 80
+        nginx['listen_https'] = false
+        grafana['enable'] = false
+        prometheus['enable'] = false
+        letsencrypt['enable'] = false
+        gitlab_rails['ldap_enabled'] = true
+        gitlab_rails['ldap_servers'] = YAML.load <<-EOS
+        IDM:
+          label: "IDM"
+          host: "ldapidmand"
+          port: 636
+          uid: "uid"
+          method: "ssl"
+          bind_dn: "cn=ldapidm,ou=sa,o=data"
+          password: "${GITLAB_LDAP_PASSWORD}"
+          timeout: 10
+          active_directory: false
+          allow_username_or_email_login: false
+          block_auto_created_users: false
+          base: "ou=users,o=data"
+          group_base: "ou=groups,o=data"
+          admin_group: "CICAGitlabAdmin"
+          user_filter: ""
+          attributes:
+            username: ["uid", "cn", "workforceID"]
+            email: ["mail"]
+            name: "cn"
+            first_name: "givenName"
+            last_name: "sn"
+        EOS
+    volumes:
+      - "${GITLAB_VOLUME_CONF}:/etc/gitlab"
+      - "${GITLAB_VOLUME_LOGS}:/var/log/gitlab"
+      - "${GITLAB_VOLUME_DATA}:/var/opt/gitlab"
+      - "/etc/localtime:/etc/localtime:ro"
+
+  gitlab-runner:
+    image: ${GITLAB_RUNNER_IMAGE}:${GITLAB_RUNNER_VERSION}
+    hostname: gitlab-runner
+    networks:
+      - gitlab-runner
+    environment:
+      DOCKER_HOST: tcp://gitlab-runner-dind:2375
+    volumes:
+      - "${GITLAB_RUNNER_VOLUME_CONF}:/etc/gitlab-runner"
+      - "/etc/localtime:/etc/localtime:ro"
+
+  gitlab-runner-dind:
+    image: ${GITLAB_RUNNER_DIND_IMAGE}:${GITLAB_RUNNER_DIND_VERSION}
+    hostname: gitlab-runner-dind
+    networks:
+      - gitlab-runner
+    privileged: true
+    userns_mode: host
+    command: ["--bip", "10.0.0.249/29", "--fixed-cidr", "10.0.0.249/29", "--dns", "192.168.28.35", "--dns", "192.168.28.150"]
+    tmpfs:
+      - /var/lib/docker:exec,suid,dev
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+
+networks:
+  traefik:
+  gitlab-ee:
+  gitlab-runner:
+
